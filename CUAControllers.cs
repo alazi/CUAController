@@ -13,6 +13,7 @@
     {
         protected JSONStorableString jsonNodeRE;
         private JSONStorableBool debug;
+        bool haveDoneRestore;
 
         protected IEnumerator WaitForAssetBundle()
         {
@@ -27,7 +28,6 @@
             }
             var item = GetContainingAtom().reParentObject;
             //printIt(item, "");
-
             yield return SyncCO();
         }
 
@@ -62,19 +62,32 @@
 
         private void DestroyOldAtoms()
         {
+            if (insideRestore) {
 
+                //return;
+                
+            }
+            SuperController.LogMessage($"destroyold: {insideRestore} {System.Environment.StackTrace}");
             foreach (var item in SuperController.singleton.GetAtoms()) {
-                if (item.uid.StartsWith(baseName))
+                if (item.uid.StartsWith(baseName)) {
+                    if (insideRestore) { SuperController.LogMessage($"skipping {item.uid} due to restoring"); continue; }
+                    SuperController.LogMessage($"deleting {item.uid}");
                     SuperController.singleton.RemoveAtom(item);
+                }
             }
         }
 
+        private void OnDestroy()
+        {
+            DestroyOldAtoms();
+        }
 
         // Use this for initialization
         public override void Init()
         {
-            DestroyOldAtoms();
 
+            SuperController.LogMessage($"Init {insideRestore}");
+            //DestroyOldAtoms();
             UIStringMessage("Target Nodes (regex):", false);
             StringTextbox(ref jsonNodeRE, "target nodes re", ".*", _ => { DestroyOldAtoms(); Sync(); }, true);
             BoolCheckbox(ref debug, "Debug", false, _ => Sync(), false);
@@ -119,6 +132,7 @@
 
         private void Sync()
         {
+            if (insideRestore) return;
             StartCoroutine(SyncCO());
         }
         private string baseName => $"z${containingAtom.uid}::";
@@ -127,7 +141,7 @@
             while (containingAtom.transform.Find("ControlLinks"))
                 DestroyImmediate(containingAtom.transform.Find("ControlLinks")?.gameObject);
 
-            //SuperController.LogMessage($"SyncCO");
+            SuperController.LogMessage($"SyncCO");
             //SuperController.LogMessage(printIt(containingAtom.transform, ""));
             var regex = new Regex(jsonNodeRE.val);
 
@@ -163,8 +177,8 @@
                 controlGO.GetComponent<SphereCollider>().enabled = false;
 
 
-                linkGO.AddComponent<FixedJoint>().connectedBody = controlAtom.reParentObject.Find("object").GetComponent<Rigidbody>();
-                linkGO.AddComponent<FixedJoint>().connectedBody = rb;
+                CreateFixedJoint(linkGO, controlAtom.reParentObject.Find("object").GetComponent<Rigidbody>());
+                CreateFixedJoint(linkGO, rb);
 
                 if (debug.val) {
                     linkGO.AddComponent<DebugComponent>();
@@ -175,6 +189,14 @@
                     controlGO.GetComponent<MeshRenderer>().enabled = false;
                 }
             }
+        }
+
+        private void CreateFixedJoint(GameObject linkGO, Rigidbody target)
+        {
+            var joint = linkGO.AddComponent<FixedJoint>();
+            joint.autoConfigureConnectedAnchor = false;
+            joint.connectedBody = target;
+            joint.connectedAnchor = new Vector3();
         }
     }
     class DebugComponent : MonoBehaviour
