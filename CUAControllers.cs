@@ -65,15 +65,43 @@
             }
         }
 
+        private void ModifyFCs(Action<FreeControllerV3> act)
+        {
+            foreach (var t in GetControlTargets()) {
+                var atom = GetAtomById(t.controlName);
+                act(atom.mainController);
+            }
+        }
+
         // Use this for initialization
         public override void Init()
         {
             UIStringMessage("Target Nodes (regex):", false);
             StringTextbox(ref jsonNodeRE, "target nodes re", ".*", _ => { regex = new Regex(jsonNodeRE.val); }, true);
-            BoolCheckbox(ref debug, "Debug", false, _ => Sync(), false);
+            BoolCheckbox(ref debug, "Debug", false, _ => Sync(), true);
 
-            CreateButton("Rebuild").button.onClick.AddListener(() => { DestroyOldAtoms(); Sync(); });
+            Button("Rebuild", () => { DestroyOldAtoms(); Sync(); }, true);
 
+            Button("All Nodes: Control Off", () => ModifyFCs(fc => {
+                fc.currentPositionState = FreeControllerV3.PositionState.Off;
+                fc.currentRotationState = FreeControllerV3.RotationState.Off;
+            }), false);
+            Button("All Nodes: Control On", () => ModifyFCs(fc => {
+                fc.currentPositionState = FreeControllerV3.PositionState.On;
+                fc.currentRotationState = FreeControllerV3.RotationState.On;
+            }), false);
+            Button("All Nodes: Control Rotation", () => ModifyFCs(fc => {
+                fc.currentPositionState = FreeControllerV3.PositionState.Off;
+                fc.currentRotationState = FreeControllerV3.RotationState.On;
+            }), false);
+            Button("All Nodes: Control Position", () => ModifyFCs(fc => {
+                fc.currentPositionState = FreeControllerV3.PositionState.On;
+                fc.currentRotationState = FreeControllerV3.RotationState.Off;
+            }), false);
+            Button("All Nodes: Comply", () => ModifyFCs(fc => {
+                fc.currentPositionState = FreeControllerV3.PositionState.Comply;
+                fc.currentRotationState = FreeControllerV3.RotationState.Comply;
+            }), false);
             regex = new Regex(jsonNodeRE.val);
             
             // do a rebuild if we came from an initial setup or the reload button, but not if we're in scene load
@@ -81,7 +109,7 @@
             StartCoroutine(MaybeWasReload());
         }
         const string atomType = "Sphere";
-        const string targetGO = "object/rescaleObject/Sphere";
+        const string renderGOName = "object/rescaleObject/Sphere";
         private IEnumerator SetupControlAtom(string name)
         {
             var controlAtom = GetAtomById(name);
@@ -94,8 +122,6 @@
                 controlAtom = SuperController.singleton.GetAtomByUid(name);
                 controlAtom.parentAtom = containingAtom;
                 controlAtom.collisionEnabledJSON.val = false; // don't explode while we're reconnecting on load
-                controlAtom.mainController.enableSelectRoot = true;
-                controlAtom.mainController.InitUI();
             }
         }
 
@@ -154,7 +180,7 @@
                 linkRB.useGravity = false;
                 linkRB.isKinematic = false;
 
-                var controlGO = controlAtom.reParentObject.Find(targetGO);
+                var controlGO = controlAtom.reParentObject.Find(renderGOName);
 
                 CreateFixedJoint(linkGO, controlAtom.reParentObject.Find("object").GetComponent<Rigidbody>());
                 CreateFixedJoint(linkGO, rb);
@@ -207,6 +233,10 @@
             input.textComponent = textfield.UItext;
             textfield.backgroundColor = Color.white;
             output.inputField = input;
+        }
+        private void Button(string label, UnityEngine.Events.UnityAction handler, bool rhs)
+        {
+            CreateButton(label, rhs).button.onClick.AddListener(handler);
         }
 
         class ControlTarget
