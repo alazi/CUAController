@@ -3,6 +3,7 @@
     using System;
     using System.Collections;
     using System.Collections.Generic;
+    using System.Linq;
     using UnityEngine;
     using UnityEngine.UI;
     using System.Text.RegularExpressions;
@@ -10,8 +11,9 @@
 
     class CUAControllers : MVRScript
     {
-        protected JSONStorableString jsonNodeRE;
+        private JSONStorableString jsonNodeRE;
         private JSONStorableBool debug;
+        private JSONStorableFloat massScale;
         bool haveDoneRestore;
         bool wasFromReload;
         private Regex regex;
@@ -81,6 +83,7 @@
             BoolCheckbox(ref debug, "Debug", false, _ => Sync(), true);
 
             Button("Rebuild", () => { DestroyOldAtoms(); Sync(); }, true);
+            FloatSlider(ref massScale, "mass scale", 0.1f, _ => Sync(), 0.001f, 10, true);
 
             Button("All Nodes: Control Off", () => ModifyFCs(fc => {
                 fc.currentPositionState = FreeControllerV3.PositionState.Off;
@@ -110,7 +113,7 @@
         }
         const string atomType = "Sphere";
         const string renderGOName = "object/rescaleObject/Sphere";
-        private IEnumerator SetupControlAtom(string name)
+        private IEnumerator SetupControlAtom(string name, Rigidbody rb)
         {
             var controlAtom = GetAtomById(name);
             if (controlAtom && controlAtom.type != atomType) {
@@ -122,23 +125,13 @@
                 controlAtom = SuperController.singleton.GetAtomByUid(name);
                 controlAtom.parentAtom = containingAtom;
                 controlAtom.collisionEnabledJSON.val = false; // don't explode while we're reconnecting on load
-            }
-        }
 
-        private GameObject CreateControlLink(string rbName)
-        {
-            var links = containingAtom.transform.Find("ControlLinks");
-            if (!links) {
-                links = new GameObject("ControlLinks").transform;
-                links.parent = containingAtom.transform;
+                // Unfortunately, the mass*scale needs to be similar for it to behave well,
+                // despite being an infinite-strength FixedJoint, and massScale only trades some annoyances for others.
+                controlAtom.mainController.RBMass = rb.mass * massScale.val;
+                controlAtom.mainController.RBDrag = 0;
+                controlAtom.mainController.RBAngularDrag = 0;
             }
-            var name = $"${rbName}Link";
-            var link = links.Find(name)?.gameObject;
-            if (link)
-                return link;
-            link = new GameObject(name);
-            link.transform.parent = links;
-            return link;
         }
 
         private IEnumerable<ControlTarget> GetControlTargets()
@@ -159,50 +152,38 @@
         private string baseName => $"z${containingAtom.uid}::";
         private IEnumerator SyncCO()
         {
-            while (containingAtom.transform.Find("ControlLinks"))
-                DestroyImmediate(containingAtom.transform.Find("ControlLinks")?.gameObject);
 
             foreach (var t in GetControlTargets()) {
                 var rb = t.rb; var controlName = t.controlName;
-                yield return SetupControlAtom(controlName);
+                yield return SetupControlAtom(controlName, t.rb);
                 var controlAtom = GetAtomById(controlName);
 
                 controlAtom.reParentObject.position = rb.position;
                 controlAtom.reParentObject.rotation = rb.rotation;
 
-                var linkGO = CreateControlLink(rb.name);
-                var linkRB = linkGO.AddComponent<Rigidbody>();
-                linkRB.transform.position = rb.transform.position;
-                linkRB.transform.rotation = rb.transform.rotation;
-                linkRB.mass = 0.1f;
-                linkRB.drag = 0;
-                linkRB.angularDrag = 0;
-                linkRB.useGravity = false;
-                linkRB.isKinematic = false;
+                var controlRB = controlAtom.mainController.followWhenOffRB;
+                var joint = rb.GetComponents<FixedJoint>().Where(j => j.connectedBody == null || j.connectedBody == controlRB).FirstOrDefault();
+                if (!joint) {
+                    joint = rb.gameObject.AddComponent<FixedJoint>();
+                }
+
+                joint.autoConfigureConnectedAnchor = false;
+                joint.connectedBody = controlRB;
+                joint.connectedAnchor = new Vector3();
+                joint.connectedMassScale = massScale.val;
 
                 var controlGO = controlAtom.reParentObject.Find(renderGOName);
 
-                CreateFixedJoint(linkGO, controlAtom.reParentObject.Find("object").GetComponent<Rigidbody>());
-                CreateFixedJoint(linkGO, rb);
-
                 if (debug.val) {
-                    linkGO.AddComponent<DebugComponent>();
                     controlGO.localScale = new Vector3(0.05f, 0.05f, 0.05f);
                     controlGO.GetComponent<MeshRenderer>().enabled = true;
                 } else {
-                    Destroy(linkGO.GetComponent<DebugComponent>());
                     controlGO.GetComponent<MeshRenderer>().enabled = false;
                 }
             }
         }
 
-        private void CreateFixedJoint(GameObject linkGO, Rigidbody target)
-        {
-            var joint = linkGO.AddComponent<FixedJoint>();
-            joint.autoConfigureConnectedAnchor = false;
-            joint.connectedBody = target;
-            joint.connectedAnchor = new Vector3();
-        }
+
 
         // UI helpers
 
@@ -245,98 +226,4 @@
             public string controlName;
         }
     }
-
-
-
-
-    // Debug helpers
-    class DebugComponent : MonoBehaviour
-    {
-
-
-        static Material lineMaterial;
-        static void CreateLineMaterial()
-        {
-            if (!lineMaterial) {
-                // Unity has a built-in shader that is useful for drawing
-                // simple colored things.
-                Shader shader = Shader.Find("Hidden/Internal-Colored"); //
-                                                                        //lineMaterial = new Material("Shader \"Lines/Colored Blended\" {" + "SubShader { Pass { " + "    Blend SrcAlpha OneMinusSrcAlpha " + "    ZWrite Off ZTest Off Cull Off Fog { Mode Off } " + "    BindChannels {" + "      Bind \"vertex\", vertex Bind \"color\", color }" + "} } }");
-                lineMaterial = new Material(shader);
-                //new Material(shader);
-                lineMaterial.hideFlags = HideFlags.HideAndDontSave;
-                // Turn on alpha blending
-                lineMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                lineMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                // Turn backface culling off
-                lineMaterial.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-                // Turn off depth writes
-                lineMaterial.SetInt("_ZWrite", 0);
-                lineMaterial.SetInt("_ZTest", (int)UnityEngine.Rendering.CompareFunction.Always);
-            }
-        }
-
-        // Will be called after all regular rendering is done
-        public void OnRenderObject()
-        {
-            CreateLineMaterial();
-            // Apply the line material
-            lineMaterial.SetPass(0);
-
-            GL.PushMatrix();
-            // Set transformation matrix for drawing to
-            // match our transform
-            //GL.MultMatrix(transform.localToWorldMatrix);
-
-            // Draw lines
-            GL.Begin(GL.LINES);
-            try {
-                float i = 0;
-                foreach (var item in base.gameObject.GetComponents<Joint>()) {
-                    if (!item.connectedBody) continue;
-                    // One vertex at transform position
-                    GL.Color(new Color(0, 1, i/2, 0.8F));
-                    GL.Vertex(transform.position);
-                    GL.Color(new Color(1, 0, i/2, 0.8F));
-                    GL.Vertex(item.connectedBody.transform.position);
-                    i++;
-                }
-            } finally {
-
-                //GL.Vertex(new Vector3());
-                //GL.Vertex(transform.position);
-                // Another vertex at edge of circle
-
-                GL.End();
-                GL.PopMatrix();
-            }
-        }
-
-
-        string printIt(Transform f, string depth)
-        {
-            string ret = "";
-            if (f == null) return "";
-            ret += depth + f.name + " " + f.gameObject.activeInHierarchy + " " + f.gameObject.activeSelf + "\n";
-            var x = f.GetComponent<Rigidbody>()?.inertiaTensor;
-            if (x != null) ret += (depth + x.ToString()) + "\n";
-            x = f.GetComponent<Rigidbody>()?.centerOfMass;
-            if (x != null) ret += (depth + x.ToString()) + "\n";
-            foreach (var comp in f.GetComponents<Component>()) {
-                ret += (depth + comp.ToString()) + "\n";
-            }
-            foreach (var item2 in f) {
-                ret += printIt((Transform)item2, depth + " ");
-            }
-            return ret;
-        }
-        static public GameObject getChildGameObject(GameObject fromGameObject, string withName)
-        {
-            var ts = fromGameObject.transform.GetComponentsInChildren<Transform>();
-            foreach (Transform t in ts) if (t.gameObject.name == withName) return t.gameObject;
-            return null;
-        }
-    }
-
-
 }
