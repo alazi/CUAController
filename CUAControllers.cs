@@ -18,6 +18,17 @@
         bool wasFromReload;
         private Regex regex;
 
+        private string _cachedBaseName;
+        private string baseName {
+            get {
+                // if you remove the script, containingAtom gets cleared before OnDestroy
+                if (containingAtom != null) { 
+                    _cachedBaseName = $"z${containingAtom.uid}::";
+                }
+                return _cachedBaseName;
+            }
+        }
+
         private IEnumerator WaitFor(Func<bool> test, float timeoutSeconds = 3.0f, float delay = 0.2f)
         {
             float waited = 0;
@@ -149,7 +160,7 @@
             if (insideRestore) return;
             StartCoroutine(SyncCO());
         }
-        private string baseName => $"z${containingAtom.uid}::";
+        
         private IEnumerator SyncCO()
         {
 
