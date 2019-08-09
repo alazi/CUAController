@@ -14,7 +14,6 @@
         private JSONStorableString jsonNodeRE;
         private JSONStorableBool debug;
         private JSONStorableFloat massScale;
-        bool haveDoneRestore;
         bool wasFromReload;
         private Regex regex;
 
