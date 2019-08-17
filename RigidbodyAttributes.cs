@@ -22,7 +22,30 @@ public class RigidbodyAttributes : MonoBehaviour
 
     public int _solverIterations;
 
-    public bool _useOverrideTensor;
+    public bool _useOverrideTensor = true;
     public Vector3 _inertiaTensor = Vector3.one;
     public int _solverVelocityIterations;
+
+    private void Sync()
+    {
+        var rb = GetComponent<Rigidbody>();
+        if (!rb) return;
+        if (_useOverrideTensor && isActiveAndEnabled) {
+            rb.inertiaTensor = _inertiaTensor;
+        } else {
+            rb.ResetInertiaTensor();
+        }
+    }
+    private void Awake()
+    {
+        Sync();
+    }
+    private void OnEnable()
+    {
+        Sync();
+    }
+    private void OnDisable()
+    {
+        Sync();
+    }
 }
