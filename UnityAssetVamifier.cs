@@ -3,6 +3,7 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using SimpleJSON;
+using System.Linq;
 
 /*
  * UnityAssetVamifier is a simple plugin to convert Materials used in
@@ -52,8 +53,8 @@ namespace MVRPlugin
         protected JSONStorableFloat jIBLFilterFloat;
         protected JSONStorableColor jSubdermisColor;
 
-        protected List<Material> origMaterials = new List<Material>();
-        protected List<Material> vamMaterials = new List<Material>();
+        protected List<Material[]> origMaterials = new List<Material[]>();
+        protected List<Material[]> vamMaterials = new List<Material[]>();
         protected Shader vamPropShader;
         protected List<Renderer> renderers = new List<Renderer>();
 
@@ -177,19 +178,30 @@ namespace MVRPlugin
             // filter renderers by supported materials
             foreach (Renderer renderer in allRenderers) {
                 //SuperController.LogError(renderer.material.shader.name);
-                if (IsValidMaterial(renderer.material)) {
-                    renderers.Add(renderer);
-                    origMaterials.Add(renderer.material);
-                    vamMaterials.Add(new Material(vamPropShader));
-                } else {
-                    invalidMaterials.Add(renderer.material);
+                var origMats = renderer.materials;
+                var vamMats = new List<Material>();
+                foreach (var mat in origMats) {
+                    if (IsValidMaterial(mat)) {
+                        vamMats.Add(new Material(vamPropShader));
+                    } else {
+                        vamMats.Add(null);
+                        invalidMaterials.Add(mat);
+                    }
                 }
+                if (vamMats.Count > 0) {
+                    renderers.Add(renderer);
+                    origMaterials.Add(origMats);
+                    vamMaterials.Add(vamMats.ToArray());
+                }
+
             }
 
             // output invalid/skipped materials
             foreach (Material invalidMaterial in invalidMaterials) {
                 SuperController.LogMessage("Material skipped: " + invalidMaterial.name + " -- Shader: [" + invalidMaterial.shader.name + "]");
             }
+
+
 
             if (renderers.Count == 0) {
                 SuperController.LogError("No compatible material could be found on this asset. Check message log for skipped materials/shaders.");
@@ -198,17 +210,22 @@ namespace MVRPlugin
 
 
             for (int i = 0; i < renderers.Count; i++) {
-
-                // reassign textures from unity to vam material
-                vamMaterials[i].SetTexture("_MainTex", origMaterials[i].GetTexture("_MainTex"));
-                vamMaterials[i].SetTexture("_BumpMap", origMaterials[i].GetTexture("_BumpMap"));
-                vamMaterials[i].SetTexture("_SpecTex", origMaterials[i].GetTexture("_SpecGlossMap"));
-                vamMaterials[i].SetTexture("_GlossTex", origMaterials[i].GetTexture("_MetallicGlossMap"));
-
-                // assign VAM material to prop renderer
-                renderers[i].material = vamMaterials[i];
-
+                var renderer = renderers[i];
+                var materials = renderers[i].materials;
+                for (int j = 0; j < renderer.materials.Length; j++) {
+                    if (vamMaterials[i][j] == null) continue;
+                    // reassign textures from unity to vam material
+                    vamMaterials[i][j].name = origMaterials[i][j].name + "vamified";
+                    vamMaterials[i][j].SetTexture("_MainTex", origMaterials[i][j].GetTexture("_MainTex"));
+                    vamMaterials[i][j].SetTexture("_BumpMap", origMaterials[i][j].GetTexture("_BumpMap"));
+                    try { vamMaterials[i][j].SetTexture("_SpecTex", origMaterials[i][j].GetTexture("_SpecGlossMap")); } catch { }
+                    try { vamMaterials[i][j].SetTexture("_GlossTex", origMaterials[i][j].GetTexture("_MetallicGlossMap")); } catch { }
+                    // assign VAM material to prop renderer
+                    materials[j] = vamMaterials[i][j];
+                }
+                renderers[i].materials = materials;
             }
+            SuperController.LogMessage($"total {vamMaterials.SelectMany(x => x).Where(x => x != null).Count()}");
 
             // apply values initially
             SetDiffColor(jDiffColor);
@@ -228,78 +245,83 @@ namespace MVRPlugin
         {
             // restore original materials
             for (int i = 0; i < renderers.Count; i++) {
-                renderers[i].material = origMaterials[i];
-            }
+                var renderer = renderers[i];
 
+                for (int j = 0; j < renderer.materials.Length; j++) {
+                    if (vamMaterials[i][j] == null) continue;
+                    renderers[i].materials[j] = origMaterials[i][j];
+                }
+            }
         }
 
 
         protected void SetDiffColor(JSONStorableColor jcolor)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
+                SuperController.LogMessage($"Setcolor {vamMaterial} from {vamMaterial.GetColor("_Color")} to {jcolor.colorPicker.currentColor}");
                 vamMaterial.SetColor("_Color", jcolor.colorPicker.currentColor);
             }
         }
 
         protected void SetSpecColor(JSONStorableColor jcolor)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetColor("_SpecColor", jcolor.colorPicker.currentColor);
             }
         }
 
         protected void SetSpecIntensity(JSONStorableFloat jf)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetFloat("_SpecInt", jf.val);
             }
         }
 
         protected void SetSpecFresnel(JSONStorableFloat jf)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetFloat("_Fresnel", jf.val);
             }
         }
 
         protected void SetSpecSharpness(JSONStorableFloat jf)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetFloat("_Shininess", jf.val);
             }
         }
 
         protected void SetDiffOffset(JSONStorableFloat jf)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetFloat("_DiffOffset", jf.val);
             }
         }
 
         protected void SetSpecOffset(JSONStorableFloat jf)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetFloat("_SpecOffset", jf.val);
             }
         }
 
         protected void SetGlossOffset(JSONStorableFloat jf)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetFloat("_GlossOffset", jf.val);
             }
         }
 
         protected void SetIBLFilter(JSONStorableFloat jf)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetFloat("_IBLFilter", jf.val);
             }
         }
 
         protected void SetSubdermisColor(JSONStorableColor jcolor)
         {
-            foreach (Material vamMaterial in vamMaterials) {
+            foreach (Material vamMaterial in vamMaterials.SelectMany(x=>x).Where(x=>x!=null)) {
                 vamMaterial.SetColor("_SubdermisColor", jcolor.colorPicker.currentColor);
             }
         }
