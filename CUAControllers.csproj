@@ -234,8 +234,10 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="CUAControllers.cs" />
+    <Compile Include="CUAPoser.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="RigidbodyAttributes.cs" />
+    <Compile Include="UnityAssetVamifier.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
