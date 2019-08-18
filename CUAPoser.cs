@@ -30,6 +30,7 @@
         void ReloadMorphs()
         {
             var atom = GetAtomById(morphAtom.val);
+            if (atom == null) return;
             var banks = atom.gameObject.GetComponentsInChildren<DAZMorphBank>();
             morphName.choices = banks.SelectMany(b => b.morphs).Where(m => m.group == "Pose Controls").Select(m => m.displayName).ToList();
         }
@@ -37,12 +38,14 @@
         void SetMorph()
         {
             var atom = GetAtomById(morphAtom.val);
+            if (atom == null) return;
             var banks = atom.gameObject.GetComponentsInChildren<DAZMorphBank>();
             
             try {
                 morph = banks.SelectMany(b => b.morphs).Where(m => m.displayName == morphName.val).Single();
             } catch (Exception e) {
                 SuperController.LogError($"Morph {morphName.val} not found or other issue: {e}");
+                return;
             }
             joints = containingAtom.reParentObject.GetComponentsInChildren<ConfigurableJoint>().
                 Select(j => j.gameObject.AddComponent<ApplyMorph>()).ToDictionary(j => j.name);
@@ -65,6 +68,7 @@
 
         private void UpdateMorph()
         {
+            if (morph == null) return;
             foreach (var item in containingAtom.reParentObject.GetComponentsInChildren<ApplyMorph>()) {
                 item.addRotation = Vector3.zero;
             }
