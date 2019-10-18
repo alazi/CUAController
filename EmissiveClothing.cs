@@ -178,7 +178,7 @@ namespace EmissiveClothing
                     if (mo.paramMaterialSlots?.Length == 0) 
                         continue;
                     foundAny = true;
-
+                    
                     foreach (var i in mo.paramMaterialSlots) {
                         var mat = wrap.GPUmaterials[i];
                         var ourMat = new Material(shader);
@@ -196,7 +196,6 @@ namespace EmissiveClothing
                         theirNewMats[i] = new Material(mat);
                         theirNewMats[i].SetFloat("_AlphaAdjust", -1);
                     }
-                    mo.customTexture6Label.text = "(emissive)";
                 }
                 if (!foundAny)
                     continue;
@@ -220,14 +219,11 @@ namespace EmissiveClothing
                 for (int j = 0; j < mats.Length; j++) {
                     if (mats[j] == null)
                         continue;
-                    wrap.GPUmaterials[j].SetTexture("_DecalTex", mats[j].GetTexture("_MainTex"));
+                    // If it's been changed, don't reset it
+                    if (wrap.GPUmaterials[j].GetTexture("_DecalTex") == null)
+                        wrap.GPUmaterials[j].SetTexture("_DecalTex", mats[j].GetTexture("_MainTex"));
                 }
 
-                foreach (var mo in wrap.GetComponents<DAZSkinWrapMaterialOptions>()) {
-                    if (!mo.overrideId.Contains("(em)"))
-                        continue;
-                    mo.customTexture6Label.text = mo.textureGroup1.sixthTextureName;
-                }
                 GameObject.Destroy(wrap.gameObject?.GetComponent<EmissiveDAZSkinWrap>());
                 wrap.draw = true;
                 var control = wrap.gameObject?.GetComponent<DAZSkinWrapControl>();
