@@ -123,7 +123,7 @@ namespace EmissiveClothing
             }
 
             foreach (var wrap in allWraps) {
-                if (wrap.ToString().Contains("Expose")) {
+                if (wrap.ToString().Contains("Emissive")) {
                     SuperController.LogError($"EmissiveClothing: found dup {wrap}");
                     continue;
                 }
@@ -168,9 +168,7 @@ namespace EmissiveClothing
                 ourMaterials.Add(ourMats);
 
                 wrap.BroadcastMessage("OnApplicationFocus", true);
-                var helper = wrap.gameObject.AddComponent<Helper>();
-                wrap.gameObject.AddComponent<ExposeDAZSkinWrap>().CopyFrom(wrap, theirNewMats, renderOriginal);
-                helper.mats = ourMats;
+                wrap.gameObject.AddComponent<EmissiveDAZSkinWrap>().CopyFrom(wrap, theirNewMats, ourMats, renderOriginal);
                 wraps.Add(wrap);
             }
 
@@ -194,9 +192,7 @@ namespace EmissiveClothing
                         continue;
                     mo.customTexture6Label.text = mo.textureGroup1.sixthTextureName;
                 }
-
-                GameObject.Destroy(wrap.gameObject?.GetComponent<Helper>());
-                GameObject.Destroy(wrap.gameObject?.GetComponent<ExposeDAZSkinWrap>());
+                GameObject.Destroy(wrap.gameObject?.GetComponent<EmissiveDAZSkinWrap>());
                 wrap.draw = true;
                 var control = wrap.gameObject?.GetComponent<DAZSkinWrapControl>();
                 if (control && (control.wrap == null || control.wrap == this)) {
@@ -205,18 +201,18 @@ namespace EmissiveClothing
             }
         }
 
-        class ExposeDAZSkinWrap : DAZSkinWrap
+        // The only thing we absolutely need and can't get normally from 
+        // DAZSkinWrap is the ComputeBuffers; Material.GetBuffer does not exist
+        class EmissiveDAZSkinWrap : DAZSkinWrap
         {
-            // The primary point is to expose these protected variables.
-            // The current shader only needs verts, but might as well expose and bind the others
-            public Dictionary<int, ComputeBuffer> MaterialVertsBuffers { get { return materialVertsBuffers; } set { materialVertsBuffers = value; } }
-            public Dictionary<int, ComputeBuffer> MaterialNormalsBuffers { get { return materialNormalsBuffers; } set { materialNormalsBuffers = value; } }
-            public Dictionary<int, ComputeBuffer> MaterialTangentsBuffers { get { return materialTangentsBuffers; } set { materialTangentsBuffers = value; } }
+            Dictionary<int, ComputeBuffer> emissiveMaterialVertsBuffers = new Dictionary<int, ComputeBuffer>();
+
             JSONStorableBool renderOriginal;
             bool oldOriginal;
-            Material[] newMats;
+            Material[] hiddenMats;
+            Material[] emissiveMats;
 
-            public void CopyFrom(DAZSkinWrap wrap, Material[] newMats, JSONStorableBool renderOriginal)
+            public void CopyFrom(DAZSkinWrap wrap, Material[] hiddenMats, Material[] emissiveMats, JSONStorableBool renderOriginal)
             {
                 base.skinTransform = wrap.skinTransform;
                 base.skin = wrap.skin;
@@ -226,7 +222,8 @@ namespace EmissiveClothing
                 base.CopyMaterials();
                 base.GPUmaterials = wrap.GPUmaterials;
                 this.renderOriginal = renderOriginal;
-                this.newMats = newMats;
+                this.hiddenMats = hiddenMats;
+                this.emissiveMats = emissiveMats;
 
                 base.wrapName = wrap.wrapName;
                 base.wrapStore = wrap.wrapStore;
@@ -257,48 +254,20 @@ namespace EmissiveClothing
                 }
                 if (!renderOriginal.val) {
                     var temp = base.GPUmaterials;
-                    base.GPUmaterials = newMats;
+                    base.GPUmaterials = hiddenMats;
                     DrawMeshGPU();
                     base.GPUmaterials = temp;
                 } else {
                     DrawMeshGPU();
                 }
-            }
-        }
-
-        class Helper : MonoBehaviour
-        {
-            ExposeDAZSkinWrap wrap;
-            public Material[] mats;
-            Dictionary<int, ComputeBuffer> materialVertsBuffers = new Dictionary<int, ComputeBuffer>();
-            Dictionary<int, ComputeBuffer> materialNormalsBuffers = new Dictionary<int, ComputeBuffer>();
-            Dictionary<int, ComputeBuffer> materialTangentsBuffers = new Dictionary<int, ComputeBuffer>();
-
-            void Start()
-            {
-                wrap = GetComponent<ExposeDAZSkinWrap>();
-            }
-
-            // We have no guarantee on ordering vs the wrap, but it doesn't seem to matter. 
-            // If it did, we could disable .draw and then manually send a LateUpdate event from inside here
-            public void LateUpdate()
-            {
-                if (mats == null) {
-                    SuperController.LogError("broken emissive helper");
-                    this.enabled = false;
-                    return;
-                }
-
-                var mesh = wrap.Mesh;
-                for (int i = 0; i < mats.Length; i++) {
-                    if (mats[i] == null)
+                
+                for (int i = 0; i < emissiveMats.Length; i++) {
+                    if (emissiveMats[i] == null)
                         continue;
-                    mats[i].renderQueue = wrap.GPUmaterials[i].renderQueue; // could probably get away without updating this past initialization
-                    UpdateBuffer(materialVertsBuffers, wrap.MaterialVertsBuffers, "verts", i);
-                    UpdateBuffer(materialNormalsBuffers, wrap.MaterialNormalsBuffers, "normals", i);
-                    UpdateBuffer(materialTangentsBuffers, wrap.MaterialTangentsBuffers, "tangents", i);
+                    emissiveMats[i].renderQueue = base.GPUmaterials[i].renderQueue; // could probably get away without updating this past initialization
+                    UpdateBuffer(emissiveMaterialVertsBuffers, base.materialVertsBuffers, "verts", i);
 
-                    Graphics.DrawMesh(mesh, Matrix4x4.identity, mats[i], 0, null, i, null, false, false);
+                    Graphics.DrawMesh(base.mesh, Matrix4x4.identity, emissiveMats[i], 0, null, i, null, false, false);
                 }
             }
 
@@ -308,11 +277,10 @@ namespace EmissiveClothing
                 ours.TryGetValue(i, out ourB);
                 theirs.TryGetValue(i, out theirB);
                 if (ourB != theirB) {
-                    mats[i].SetBuffer(buf, theirB);
+                    emissiveMats[i].SetBuffer(buf, theirB);
                     ours[i] = theirB;
                 }
             }
         }
-        
     }
 }
