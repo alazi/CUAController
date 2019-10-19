@@ -3,7 +3,7 @@ using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using AssetBundles;
+using MeshVR;
 
 namespace EmissiveClothing
 {
@@ -12,6 +12,7 @@ namespace EmissiveClothing
         JSONStorableFloat alpha;
         JSONStorableBool renderOriginal;
         JSONStorableUrl loadedShaderPath = new JSONStorableUrl("shader", "");
+        bool loadedAssetBundle;
 
         private static readonly string BUNDLE_NAME = "emissiveshader.assetbundle";
 
@@ -73,77 +74,98 @@ namespace EmissiveClothing
             CreateSlider(output, rhs);
         }
 
-        // Everything about all this shader loading is a horrible hack
+        // MeshVR.AssetLoader provides some nice refcounting for us.
+        // The downsides are the annoying callback API, that we can't suppress error messages, and that a refcount really shouldn't be created on failure, wat
+        class LoadAssetBundle : CustomYieldInstruction {
+            AssetLoader.AssetBundleFromFileRequest req;
+
+            private bool done;
+
+            // We can't write the type AssetBundle, but we can call methods on it. lolwut C#
+            public bool success => req.assetBundle != null;
+            public T GetAsset<T>(string name) where T : UnityEngine.Object
+            {
+                return req.assetBundle?.LoadAsset<T>(name);
+            }
+
+            public LoadAssetBundle(string url)
+            {
+                req = new AssetLoader.AssetBundleFromFileRequest {
+                    path = url,
+                    callback = _ => {
+                        done = true;
+                        if (req.assetBundle == null)
+                            AssetLoader.DoneWithAssetBundleFromFile(req.path);
+                    }
+                };
+                AssetLoader.QueueLoadAssetBundleFromFile(req);
+            }
+
+            public override bool keepWaiting => !done;
+        }
+
         private IEnumerator AttemptLoadShader(string url)
         {
             if (shader != null)
                 yield break;
-            // So, AssetBundle.LoadFromFileAsync refuses to compile for some reason, 
-            // and trying to unload using MeshVR.AssetLoader (after OnDestroy + coroutine delay several frames)
-            // crashes unity for some reason anyways,so we'll just do the simple thing of never unloading
-
-            // LoadAssetAsync is relative to StreamingAssets
-            AssetBundleLoadAssetOperation request = AssetBundleManager.LoadAssetAsync("..\\..\\" + url, "Assets/EmissiveHack.shader", typeof(Shader));
-
-            if (request == null) {
-                yield break;
-            }
+            var request = new LoadAssetBundle(url);
             yield return StartCoroutine(request);
-            shader = request.GetAsset<Shader>();
-            if (shader != null)
+
+            if (!request.success)
+                yield break;
+            shader = request.GetAsset<Shader>("Assets/EmissiveHack.shader");
+            if (shader != null) {
                 loadedShaderPath.val = url;
+                loadedAssetBundle = true;
+            } else {
+                SuperController.LogError("Bad emissiveshader assetbundle");
+                AssetLoader.DoneWithAssetBundleFromFile(url);
+            }
         }
 
-        // If there are multiple copies of this script loaded (over the course of a session, even), 
-        // we don't want to fail because unity refuses to reload an identical assetbundle from a different path
-        private static readonly string STASH_NAME = "EmissiveShaderStash";
-        private void StashShader()
+        // If there are multiple copies of this script loaded from different paths, avoid failures due to trying to load the same assetbundle. 
+        // This is particularly important because sometimes the bundle seems to get leaked and not unload the shader.
+        // Stash the url as well so that vac saves work properly even if this happens
+        private static readonly string STASH_NAME = "Alazi.EmissiveShaderStash";
+        private void StashShaderName()
         {
-            var go = new GameObject(STASH_NAME);
-            go.SetActive(false);
-            var rend = go.AddComponent<LineRenderer>();
-            rend.material = new Material(shader);
-            rend.material.name = loadedShaderPath.val;
-            rend.enabled = false;
-            go.transform.parent = Singleton<Localizatron>.Instance.gameObject.transform;
+            PlayerPrefs.SetString(STASH_NAME, loadedShaderPath.val);
         }
-        private Shader FindStashedShader()
+        private void LoadStashedShader()
         {
-            var trans = Singleton<Localizatron>.Instance.gameObject.transform.Find(STASH_NAME);
-            if (trans == null)
-                return null;
-            var mat = trans.gameObject.GetComponent<LineRenderer>().material;
-            if (loadedShaderPath.val == "")
-                loadedShaderPath.val = mat.name;
-            return mat.shader;
+            shader = Resources.FindObjectsOfTypeAll<Shader>().Where(s => s.name == "Custom/Alazi/ExtraEmissiveComputeBuff").FirstOrDefault();
+            if (shader != null) {
+                loadedShaderPath.val = PlayerPrefs.GetString(STASH_NAME);
+            } else {
+                PlayerPrefs.DeleteKey(STASH_NAME);
+            }
         }
 
         protected IEnumerator LoadShaderAndInit()
         {
             // Wait until json load is done
             yield return new WaitForEndOfFrame();
-            shader = FindStashedShader();
+            LoadStashedShader();
 
             if (shader == null) {
                 if (loadedShaderPath.val != "")
                     yield return AttemptLoadShader(loadedShaderPath.val);
                 yield return AttemptLoadShader($"{GetPluginPath()}/{BUNDLE_NAME}");
-                yield return AttemptLoadShader($"Custom\\Assets\\{BUNDLE_NAME}");
+                yield return AttemptLoadShader($"Custom/Assets/{BUNDLE_NAME}");
 
                 if (shader == null) {
                     SuperController.LogError("Failed to load shader");
                     yield break;
                 }
-                StashShader();
+                StashShaderName();
             }
 
             Build();
         }
 
-
         protected IEnumerator Rebuild()
         {
-            OnDestroy();
+            Unbuild();
             // wait for components to be destroyed
             yield return new WaitForEndOfFrame();
             Build();
@@ -209,9 +231,9 @@ namespace EmissiveClothing
 
             SyncMats();
         }
+        
 
-
-        void OnDestroy()
+        void Unbuild()
         {
             for (int i = 0; i < wraps.Count; i++) {
                 var wrap = wraps[i];
@@ -230,6 +252,14 @@ namespace EmissiveClothing
                 if (control && (control.wrap == null || control.wrap == this)) {
                     control.wrap = wrap;
                 }
+            }
+        }
+
+        void OnDestroy()
+        {
+            Unbuild();
+            if (loadedAssetBundle) {
+                AssetLoader.DoneWithAssetBundleFromFile(loadedShaderPath.val);
             }
         }
 
@@ -315,4 +345,5 @@ namespace EmissiveClothing
             }
         }
     }
+
 }
