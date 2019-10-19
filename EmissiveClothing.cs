@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using MeshVR;
+using SimpleJSON;
 
 namespace EmissiveClothing
 {
@@ -13,6 +14,8 @@ namespace EmissiveClothing
         JSONStorableBool renderOriginal;
         JSONStorableUrl loadedShaderPath = new JSONStorableUrl("shader", "");
         bool loadedAssetBundle;
+        bool isLoading;
+        int retryAttempts;
 
         private static readonly string BUNDLE_NAME = "emissiveshader.assetbundle";
 
@@ -44,6 +47,11 @@ namespace EmissiveClothing
             } catch (Exception e) {
                 SuperController.LogError("Exception caught: " + e);
             }
+        }
+        public override void RestoreFromJSON(JSONClass jc, bool restorePhysical = true, bool restoreAppearance = true, JSONArray presetAtoms = null, bool setMissingToDefault = true)
+        {
+            isLoading = true;
+            base.RestoreFromJSON(jc, restorePhysical, restoreAppearance, presetAtoms, setMissingToDefault);
         }
 
         string GetPluginPath() // basically straight from VAMDeluxe's Dollmaster
@@ -179,6 +187,7 @@ namespace EmissiveClothing
                 SuperController.LogMessage("No clothes loaded");
                 return;
             }
+            bool doRescan = false;
 
             foreach (var wrap in allWraps) {
                 if (wrap.ToString().Contains("Emissive")) {
@@ -211,8 +220,13 @@ namespace EmissiveClothing
                         // require too much effort to reimplement all the url/tile/offset->texture code 
                         // or to copy the existing one to override the relevant methods
                         // So require the user to hit rescan manually.
-                        ourMat.SetTexture("_MainTex", mat.GetTexture("_DecalTex"));
+                        var tex = mat.GetTexture("_DecalTex");
+                        ourMat.SetTexture("_MainTex", tex);
                         mat.SetTexture("_DecalTex", null);
+
+                        // Particularly during scene load it may take a while for these to be loaded, try a few times
+                        if (tex == null)
+                            doRescan = true;
 
                         // could maybe get some tiny extra performance by using a null shader instead
                         theirNewMats[i] = new Material(mat);
@@ -230,8 +244,21 @@ namespace EmissiveClothing
             }
 
             SyncMats();
+            if (doRescan)
+                StartCoroutine(QueueRescan());
+            else
+                isLoading = false;
         }
-        
+
+        private IEnumerator QueueRescan()
+        {
+            // 1s normally or 40s during load
+            if (retryAttempts < 5 || (isLoading && retryAttempts < 200)) {
+                yield return new WaitForSeconds(0.2f);
+                retryAttempts++;
+                yield return Rebuild();
+            }
+        }
 
         void Unbuild()
         {
